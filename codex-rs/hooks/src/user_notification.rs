@@ -77,6 +77,46 @@ pub fn notify_hook(argv: Vec<String>) -> Hook {
     }
 }
 
+/// Generic command hook — pipes the full JSON payload to the command's stdin.
+/// Used for session_start, pre_compact, and after_tool_use hooks.
+pub fn command_hook(argv: Vec<String>) -> Hook {
+    let argv = Arc::new(argv);
+    Hook {
+        name: argv.first().cloned().unwrap_or_else(|| "hook".to_string()),
+        func: Arc::new(move |payload: &HookPayload| {
+            let argv = Arc::clone(&argv);
+            Box::pin(async move {
+                let mut command = match command_from_argv(&argv) {
+                    Some(command) => command,
+                    None => return HookResult::Success,
+                };
+                let json = match serde_json::to_string(payload) {
+                    Ok(j) => j,
+                    Err(_) => return HookResult::FailedContinue(
+                        std::io::Error::other("failed to serialize hook payload").into()
+                    ),
+                };
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+
+                match command.spawn() {
+                    Ok(mut child) => {
+                        if let Some(stdin) = child.stdin.take() {
+                            use tokio::io::AsyncWriteExt;
+                            let mut stdin = stdin;
+                            let _ = stdin.write_all(json.as_bytes()).await;
+                        }
+                        HookResult::Success
+                    }
+                    Err(err) => HookResult::FailedContinue(err.into()),
+                }
+            })
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;

@@ -59,6 +59,7 @@ use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
+use codex_hooks::HookEventSessionStart;
 use codex_hooks::HookPayload;
 use codex_hooks::HookResult;
 use codex_hooks::Hooks;
@@ -1555,6 +1556,9 @@ impl Session {
             ),
             hooks: Hooks::new(HooksConfig {
                 legacy_notify_argv: config.notify.clone(),
+                session_start: config.hooks.as_ref().and_then(|h| h.session_start.clone()),
+                pre_compact: config.hooks.as_ref().and_then(|h| h.pre_compact.clone()),
+                after_tool_use: config.hooks.as_ref().and_then(|h| h.after_tool_use.clone()),
             }),
             rollout: Mutex::new(rollout_recorder),
             user_shell: Arc::new(default_shell),
@@ -1635,6 +1639,22 @@ impl Session {
         for event in events {
             sess.send_event_raw(event).await;
         }
+
+        // Dispatch SessionStart hook to notify external scripts that a session has begun.
+        sess.hooks()
+            .dispatch(HookPayload {
+                session_id: conversation_id,
+                cwd: session_configuration.cwd.clone(),
+                client: None,
+                triggered_at: chrono::Utc::now(),
+                hook_event: HookEvent::SessionStart {
+                    event: HookEventSessionStart {
+                        model: config.model.clone().unwrap_or_default(),
+                        provider: config.model_provider.name.clone(),
+                    },
+                },
+            })
+            .await;
 
         // Start the watcher after SessionConfigured so it cannot emit earlier events.
         sess.start_file_watcher_listener();

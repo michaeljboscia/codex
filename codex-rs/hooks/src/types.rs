@@ -144,9 +144,33 @@ where
     serializer.serialize_str(&value.to_rfc3339_opts(SecondsFormat::Secs, true))
 }
 
+/// Payload for SessionStart hook - fired when a new session begins.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct HookEventSessionStart {
+    pub model: String,
+    pub provider: String,
+}
+
+/// Payload for PreCompact hook - fired before context compaction occurs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct HookEventPreCompact {
+    pub reason: String,
+    pub transcript_path: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum HookEvent {
+    SessionStart {
+        #[serde(flatten)]
+        event: HookEventSessionStart,
+    },
+    PreCompact {
+        #[serde(flatten)]
+        event: HookEventPreCompact,
+    },
     AfterAgent {
         #[serde(flatten)]
         event: HookEventAfterAgent,
