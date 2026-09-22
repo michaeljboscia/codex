@@ -2211,8 +2211,7 @@ mod tests {
             Arc::new(ToolPluginProvenance::default()),
         );
 
-        let client_for_task = client.clone();
-        let handle = tokio::spawn(async move { client_for_task.client().await });
+        let handle = tokio::spawn(async move { client.client().await });
         // Let the child spawn and the handshake begin to hang.
         tokio::time::sleep(Duration::from_millis(300)).await;
 
