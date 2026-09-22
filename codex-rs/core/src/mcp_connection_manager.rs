@@ -2170,6 +2170,66 @@ mod tests {
         assert_eq!(tool.tool_name, "calendar_create_event");
     }
 
+    // A throwaway connection manager (for example the one used to enumerate
+    // connectors) cancels its token when it is done. Cancellation must abort a
+    // still-connecting server immediately, not leave the connection open until
+    // the startup timeout expires. That leak produced long idle MCP service
+    // spans with near-zero busy time.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_startup_token_aborts_connecting_server_without_awaiting_timeout() {
+        let (tx_event, _rx_event) = async_channel::unbounded();
+        let cancel_token = CancellationToken::new();
+        // `sleep` starts but never speaks MCP, so the initialize handshake hangs
+        // for the full startup timeout unless cancellation interrupts it.
+        let config = McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: "sleep".to_string(),
+                args: vec!["60".to_string()],
+                env: None,
+                env_vars: Vec::new(),
+                cwd: None,
+            },
+            enabled: true,
+            required: false,
+            disabled_reason: None,
+            startup_timeout_sec: Some(Duration::from_secs(60)),
+            tool_timeout_sec: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth_resource: None,
+        };
+        let client = AsyncManagedClient::new(
+            "hung".to_string(),
+            config,
+            OAuthCredentialsStoreMode::default(),
+            cancel_token.clone(),
+            tx_event,
+            ElicitationRequestManager::new(AskForApproval::Never),
+            None,
+            Arc::new(ToolPluginProvenance::default()),
+        );
+
+        let handle = tokio::spawn(async move { client.client().await });
+        // Let the child spawn and the handshake begin to hang.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let start = std::time::Instant::now();
+        cancel_token.cancel();
+        let outcome = tokio::time::timeout(Duration::from_secs(30), handle)
+            .await
+            .expect("startup should resolve promptly after cancellation")
+            .expect("startup task should not panic");
+        let elapsed = start.elapsed();
+
+        assert!(matches!(outcome, Err(StartupOutcomeError::Cancelled)));
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "cancellation should short-circuit the startup timeout, took {elapsed:?}"
+        );
+    }
+
     #[test]
     fn elicitation_capability_enabled_only_for_codex_apps() {
         let codex_apps_capability = elicitation_capability_for_server(CODEX_APPS_MCP_SERVER_NAME);

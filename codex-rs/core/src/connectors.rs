@@ -210,9 +210,12 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
     if should_reload_tools {
         tools = mcp_connection_manager.list_all_tools().await;
     }
-    if codex_apps_ready {
-        cancel_token.cancel();
-    }
+    // This manager is throwaway. Its background startup tasks hold each MCP
+    // connection open until the handshake finishes, up to the startup timeout
+    // (30s for codex-apps). Cancel in every path, not just the ready one: a path
+    // that returns before the server is ready (such as a tools cache hit) would
+    // otherwise leave an idle connection open for the full timeout.
+    cancel_token.cancel();
 
     let accessible_connectors =
         filter_disallowed_connectors(accessible_connectors_from_mcp_tools(&tools));
